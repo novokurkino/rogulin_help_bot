@@ -7,69 +7,62 @@ from telegram.ext import (
     filters,
 )
 
-# Токен вашего бота
 TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
-# Простое хранилище привычек для каждого пользователя
+# Простое хранилище привычек для пользователей
 user_habits = {}
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_habits:
-        # Создаём словарь привычек для нового пользователя
         user_habits[user_id] = {
             "pushups": 0,
-            "new_habit_1": 0,
-            "new_habit_2": 0,
-            # Добавьте свои новые привычки здесь
+            "habit1": 0,
+            "habit2": 0,
         }
     await update.message.reply_text(
-        "Привет! Я буду отслеживать твои привычки.\n"
-        "Отправь мне сообщение с названием привычки и количеством, например:\n"
-        "`pushups 20`", parse_mode="Markdown"
+        "Привет! Отслеживаю твои привычки.\n"
+        "Отправь сообщение в формате: habit_name число\n"
+        "Например: pushups 20"
     )
 
-# Обработка сообщений с привычками
-async def handle_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in user_habits:
-        # Если пользователь не запускал /start
-        await update.message.reply_text("Сначала введи /start")
-        return
-
-    try:
-        # Ожидаем формат: habit_name number
-        text = update.message.text.strip().split()
-        habit_name = text[0].lower()
-        count = int(text[1])
-
-        if habit_name in user_habits[user_id]:
-            user_habits[user_id][habit_name] += count
-            await update.message.reply_text(
-                f"{habit_name} обновлено! Сейчас у тебя: {user_habits[user_id][habit_name]}"
-            )
-        else:
-            await update.message.reply_text(
-                f"Привычка '{habit_name}' не найдена. Используй: {', '.join(user_habits[user_id].keys())}"
-            )
-    except (IndexError, ValueError):
-        await update.message.reply_text(
-            "Неправильный формат. Используй: habit_name число, например:\npushups 20"
-        )
-
-# Команда /status — показать текущие привычки
+# Команда /status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_habits:
         await update.message.reply_text("Сначала введи /start")
         return
-
     habits = user_habits[user_id]
-    status_text = "\n".join(f"{k}: {v}" for k, v in habits.items())
-    await update.message.reply_text(f"Твои привычки:\n{status_text}")
+    text = "\n".join(f"{k}: {v}" for k, v in habits.items())
+    await update.message.reply_text(f"Твои привычки:\n{text}")
 
-# Основная часть бота
+# Обработка сообщений с привычками
+async def handle_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_habits:
+        await update.message.reply_text("Сначала введи /start")
+        return
+
+    try:
+        habit_name, count_str = update.message.text.strip().split()
+        count = int(count_str)
+        habit_name = habit_name.lower()
+
+        if habit_name in user_habits[user_id]:
+            user_habits[user_id][habit_name] += count
+            await update.message.reply_text(
+                f"{habit_name} обновлено! Сейчас: {user_habits[user_id][habit_name]}"
+            )
+        else:
+            await update.message.reply_text(
+                f"Привычка '{habit_name}' не найдена. Доступные: {', '.join(user_habits[user_id].keys())}"
+            )
+    except Exception:
+        await update.message.reply_text(
+            "Ошибка формата. Используй: habit_name число, например: pushups 20"
+        )
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
