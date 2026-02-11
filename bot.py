@@ -1,8 +1,9 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
-    CommandHandler,
     ContextTypes,
+    CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
 )
@@ -11,9 +12,8 @@ import json
 import os
 
 TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
-
-GOAL_PUSHUPS = 100  # цель отжиманий
-HABITS = ["Контрастный душ", "Чтение", "Витамины", "Отжимания"]
+GOAL_PUSHUPS = 100
+HABITS = ["Контрастный душ", "Чтение", "Витамины", "100 отжиманий"]
 DATA_FILE = "data.json"
 
 # ----------------- Работа с файлом -----------------
@@ -30,65 +30,48 @@ def save_data(data):
 def get_today():
     return str(datetime.date.today())
 
-# ----------------- Подсчет прогресса -----------------
+# ----------------- Подсчет серии дней подряд -----------------
 def calculate_streak(data, habit):
     streak = 0
     today = datetime.date.today()
-
     for i in range(1, 365):
         day = str(today - datetime.timedelta(days=i))
-        if day in data and habit in data[day] and data[day][habit]:
-            streak += 1
+        if day in data and habit in data[day]:
+            # Для отжиманий проверяем, что сделано >= GOAL
+            if habit == "100 отжиманий":
+                if data[day][habit] >= GOAL_PUSHUPS:
+                    streak += 1
+                else:
+                    break
+            else:
+                if data[day][habit]:
+                    streak += 1
+                else:
+                    break
         else:
             break
     return streak
 
-# ----------------- Обработчик сообщений -----------------
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    data = load_data()
-    today = get_today()
+# ----------------- Отправка клавиатуры -----------------
+def get_habits_keyboard():
+    keyboard = [[InlineKeyboardButton(habit, callback_data=habit)] for habit in HABITS]
+    return InlineKeyboardMarkup(keyboard)
 
-    if today not in data:
-        data[today] = {}
-
-    # Если пользователь вводит число → считаем как отжимания
-    if text.isdigit():
-        pushups_done = int(text)
-        data[today]["Отжимания"] = data[today].get("Отжимания", 0) + pushups_done
-        save_data(data)
-        done = data[today]["Отжимания"]
-        left = max(0, GOAL_PUSHUPS - done)
-        if done >= GOAL_PUSHUPS:
-            await update.message.reply_text(f"✅ Дневная цель отжиманий выполнена!\nСделано: {done}")
-        else:
-            await update.message.reply_text(f"Сделано сегодня: {done}\nОсталось до цели: {left}")
-        return
-
-    # Если сообщение совпадает с привычкой
-    if text in HABITS:
-        data[today][text] = True
-        save_data(data)
-        streak = calculate_streak(data, text)
-        await update.message.reply_text(f"✅ Привычка '{text}' отмечена!\nСерий подряд: {streak} дней")
-    else:
-        await update.message.reply_text("Просто отправь название привычки или число отжиманий 🙂")
-
-# ----------------- Команды -----------------
+# ----------------- Команда /start -----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    habits_text = "\n".join(HABITS)
     await update.message.reply_text(
-        f"Привет! Я буду помогать отслеживать твои привычки.\n"
-        f"Вот что можно отмечать:\n{habits_text}\n\n"
-        f"Для отжиманий просто пришли число, сколько сделал сегодня."
+        "Привет! Я буду помогать отслеживать твои привычки.\n"
+        "Нажми на кнопку, чтобы отметить привычку или сделать отжимания.",
+        reply_markup=get_habits_keyboard()
     )
 
+# ----------------- Команда /status -----------------
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     today = get_today()
     message = "Сегодня выполнено:\n"
     for habit in HABITS:
-        if habit == "Отжимания":
+        if habit == "100 отжиманий":
             done = data.get(today, {}).get(habit, 0)
             message += f"{habit}: {done}/{GOAL_PUSHUPS}\n"
         else:
@@ -96,12 +79,61 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += f"{habit}: {'✅' if done else '❌'}\n"
     await update.message.reply_text(message)
 
+# ----------------- Обработка нажатий кнопок -----------------
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    habit = query.data
+    data = load_data()
+    today = get_today()
+    if today not in data:
+        data[today] = {}
+
+    if habit == "100 отжиманий":
+        await query.message.reply_text("Сколько отжиманий сделал сейчас? Отправь число.")
+        # Сохраняем, что пользователь сейчас вводит отжимания
+        context.user_data["awaiting_pushups"] = True
+    else:
+        data[today][habit] = True
+        save_data(data)
+        streak = calculate_streak(data, habit)
+        await query.message.reply_text(f"✅ Привычка '{habit}' отмечена!\nСерий подряд: {streak} дней")
+
+# ----------------- Обработка сообщений -----------------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    today = get_today()
+    data = load_data()
+    if today not in data:
+        data[today] = {}
+
+    # Если пользователь вводит отжимания
+    if context.user_data.get("awaiting_pushups"):
+        if not text.isdigit():
+            await update.message.reply_text("Пришли просто число отжиманий 🙂")
+            return
+        pushups_done = int(text)
+        data[today]["100 отжиманий"] = data[today].get("100 отжиманий", 0) + pushups_done
+        save_data(data)
+        done = data[today]["100 отжиманий"]
+        left = max(0, GOAL_PUSHUPS - done)
+        if done >= GOAL_PUSHUPS:
+            await update.message.reply_text(f"✅ Дневной план отжиманий выполнен! Сделано: {done}")
+        else:
+            await update.message.reply_text(f"Сделано сегодня: {done}\nОсталось до цели: {left}")
+        # Сбрасываем флаг ожидания числа
+        context.user_data["awaiting_pushups"] = False
+        return
+
+    await update.message.reply_text("Нажми на кнопку привычки или отправь число отжиманий после нажатия кнопки.")
+
 # ----------------- Основная функция -----------------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     print("Бот запущен...")
