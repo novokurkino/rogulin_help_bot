@@ -1,166 +1,107 @@
 import os
 import asyncio
+from datetime import datetime, date
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from datetime import date, timedelta
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# -----------------------------
+# Берём токен из переменной окружения Railway
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise ValueError("API_TOKEN не найден! Добавь его в Variables на Railway.")
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher()
 
-# -----------------------------
-# FSM для ввода отжиманий
-class PushupState(StatesGroup):
-    waiting_for_count = State()
+# Данные пользователей в памяти (для простоты)
+user_data = {}
 
-# -----------------------------
-# Пользовательские данные
-user_data = {}  # структура: {user_id: {habit_name: count, pushups_done: int, streak: int, last_date: date}}
+# Список привычек
+habits = ["Контрастный душ", "Чтение", "Витамины", "100 отжиманий"]
 
-HABITS = ["Контрастный душ", "Чтение", "Витамины", "100 отжиманий"]
-
-# -----------------------------
-# Создаем клавиатуру с привычками
-def habit_keyboard(user_id: int):
-    kb = InlineKeyboardMarkup(row_width=2)
-    for habit in HABITS:
-        kb.add(InlineKeyboardButton(text=habit, callback_data=f"habit:{habit}"))
-    return kb
-
-# -----------------------------
-# Команда /start
-@dp.message(Command(commands=["start"]))
-async def start(message: types.Message):
-    user_id = message.from_user.id
+def get_user(user_id):
+    """Создаёт структуру данных для нового пользователя, если ещё нет"""
     if user_id not in user_data:
         user_data[user_id] = {
-            "Контрастный душ": 0,
-            "Чтение": 0,
-            "Витамины": 0,
-            "100 отжиманий": 0,
-            "streak": 0,
-            "last_pushup_date": None,
-            "last_reset": date.today()
+            "habits_done": {"Контрастный душ": False, "Чтение": False, "Витамины": False},
+            "pushups_done": 0,
+            "pushups_streak": 0,
+            "last_pushups_date": None,
+            "today": date.today()
         }
-    await message.answer("Привет! Вот твой трекер привычек на сегодня:", reply_markup=habit_keyboard(user_id))
+    # Сбрасываем ежедневные привычки при смене дня
+    if user_data[user_id]["today"] != date.today():
+        user_data[user_id]["habits_done"] = {h: False for h in ["Контрастный душ","Чтение","Витамины"]}
+        user_data[user_id]["pushups_done"] = 0
+        user_data[user_id]["today"] = date.today()
+    return user_data[user_id]
 
-# -----------------------------
-# Обработка нажатий на кнопки
-@dp.callback_query(lambda c: c.data and c.data.startswith("habit:"))
-async def habit_pressed(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    habit = callback.data.split(":")[1]
+def build_keyboard():
+    kb = InlineKeyboardBuilder()
+    for h in habits:
+        kb.add(InlineKeyboardButton(text=h, callback_data=h))
+    return kb.as_markup()
 
-    today = date.today()
-    data = user_data[user_id]
-
-    # Сброс дневных счетчиков если новый день
-    if data.get("last_reset") != today:
-        data["Контрастный душ"] = 0
-        data["Чтение"] = 0
-        data["Витамины"] = 0
-        data["100 отжиманий"] = 0
-        data["last_reset"] = today
-        await callback.message.answer("Новый день! Счетчики привычек сброшены.")
-
-    if habit != "100 отжиманий":
-        if data[habit] == 0:
-            data[habit] = 1
-            await callback.message.answer(f"Привычка '{habit}' выполнена ✅")
-        else:
-            await callback.message.answer(f"Привычка '{habit}' уже выполнена сегодня!")
-    else:
-        await callback.message.answer("Сколько отжиманий сделал? Введи число:")
-        await state.set_state(PushupState.waiting_for_count)
-
-    await callback.answer()
-
-# -----------------------------
-# Обработка ввода числа отжиманий
-@dp.message(PushupState.waiting_for_count)
-async def pushup_count(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    data = user_data[user_id]
-
-    try:
-        count = int(message.text.strip())
-        if count <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введите корректное число отжиманий!")
-        return
-
-    # Проверяем дату для streak
-    today = date.today()
-    if data.get("last_pushup_date") == today - timedelta(days=1):
-        data["streak"] += 1
-    elif data.get("last_pushup_date") != today:
-        data["streak"] = 1  # сброс, если пропустил день
-
-    data["100 отжиманий"] += count
-    data["last_pushup_date"] = today
-
-    remaining = max(0, 100 - data["100 отжиманий"])
-    if remaining > 0:
-        await message.answer(f"Ты сделал {data['100 отжиманий']} отжиманий. Осталось {remaining} 🏋️")
-    else:
-        await message.answer(f"Дневной план отжиманий выполнен! 🎉\nТекущий непрерывный стрик: {data['streak']} дней")
-        data["100 отжиманий"] = 100  # фиксируем максимум
-
-    await state.clear()
-
-# -----------------------------
-# Команда /status - показать текущее состояние
-@dp.message(Command(commands=["status"]))
-async def status(message: types.Message):
-    user_id = message.from_user.id
-    data = user_data.get(user_id)
-    if not data:
-        await message.answer("Нет данных. Нажми /start")
-        return
-
-    text = (
-        f"Твои привычки на сегодня:\n"
-        f"Контрастный душ: {'✅' if data['Контрастный душ'] else '❌'}\n"
-        f"Чтение: {'✅' if data['Чтение'] else '❌'}\n"
-        f"Витамины: {'✅' if data['Витамины'] else '❌'}\n"
-        f"100 отжиманий: {data['100 отжиманий']}/100\n"
-        f"Стрик дней с отжиманиями: {data['streak']}"
+@dp.message(Command(commands=["start"]))
+async def start(message: types.Message):
+    get_user(message.from_user.id)
+    await message.answer(
+        "Привет! Я твой трекер привычек.\nВыбери привычку:",
+        reply_markup=build_keyboard()
     )
-    await message.answer(text)
 
-# -----------------------------
-# Запуск бота
+@dp.callback_query()
+async def handle_habit(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    data = call.data
+    user = get_user(user_id)
+
+    # Если это одна из трёх обычных привычек
+    if data in ["Контрастный душ", "Чтение", "Витамины"]:
+        if user["habits_done"][data]:
+            await call.message.answer(f"Привычка '{data}' уже выполнена сегодня ✅")
+        else:
+            user["habits_done"][data] = True
+            await call.message.answer(f"Привычка '{data}' засчитана ✅")
+        await call.answer()
+        return
+
+    # Отжимания
+    if data == "100 отжиманий":
+        await call.message.answer(f"Сколько отжиманий сделал сегодня? Уже сделано: {user['pushups_done']}")
+        await call.answer()
+        return
+
+@dp.message()
+async def handle_pushups(message: types.Message):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+
+    # Проверяем, что сообщение — число
+    if message.text.isdigit():
+        reps = int(message.text)
+        user["pushups_done"] += reps
+
+        remaining = 100 - user["pushups_done"]
+        if remaining <= 0:
+            # Завершили 100 отжиманий
+            await message.answer("Поздравляю! Дневной план отжиманий выполнен 💪")
+            # Обновляем серию
+            today = date.today()
+            if user["last_pushups_date"] == today - timedelta(days=1):
+                user["pushups_streak"] += 1
+            else:
+                user["pushups_streak"] = 1
+            user["last_pushups_date"] = today
+            user["pushups_done"] = 100
+        else:
+            await message.answer(f"Сделано {user['pushups_done']}, осталось {remaining} отжиманий")
+
+        await message.answer(f"Текущий стрик дней с отжиманиями: {user['pushups_streak']}")
+    else:
+        # Если не число — игнорируем
+        await message.answer("Введи количество отжиманий цифрой!")
+
 if __name__ == "__main__":
-    import asyncio
-    print("Бот запущен...")
     asyncio.run(dp.start_polling(bot))
-import os
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.utils import executor
-
-# Получаем токен из переменных окружения
-API_TOKEN = os.getenv("API_TOKEN")
-
-if not API_TOKEN:
-    raise ValueError("API_TOKEN не найден! Добавь его в Variables на Railway.")
-
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
-from dotenv import load_dotenv
-import os
-
-load_dotenv()  # Загружает .env файл
-
-API_TOKEN = os.getenv("API_TOKEN")
-if not API_TOKEN:
-    raise ValueError("API_TOKEN не найден! Добавь его в Variables на Railway.")
