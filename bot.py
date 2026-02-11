@@ -6,129 +6,80 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-import datetime
-import json
-import os
 
-TOKEN = os.getenv("TOKEN")
-DATA_FILE = "data.json"
-DEFAULT_GOAL = 100
+# Токен вашего бота
+TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
+# Простое хранилище привычек для каждого пользователя
+user_habits = {}
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def get_today():
-    return str(datetime.date.today())
-
-
-def get_user(data, user_id):
-    uid = str(user_id)
-    if uid not in data:
-        data[uid] = {
-            "goal": DEFAULT_GOAL,
-            "pushups": {},
-            "habits": {}
-        }
-    return data[uid]
-
-
-async def handle_pushups(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if not text.isdigit():
-        return
-
-    user_id = update.effective_user.id
-    data = load_data()
-    user = get_user(data, user_id)
-
-    today = get_today()
-    user["pushups"].setdefault(today, 0)
-    user["pushups"][today] += int(text)
-
-    save_data(data)
-
-    done = user["pushups"][today]
-    left = user["goal"] - done
-
-    if done >= user["goal"]:
-        await update.message.reply_text(f"🔥 Цель по отжиманиям выполнена: {done}")
-    else:
-        await update.message.reply_text(f"Отжимания сегодня: {done}\nОсталось: {left}")
-
-
-async def add_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    data = load_data()
-    user = get_user(data, user_id)
-
-    try:
-        name = context.args[0]
-        time_str = context.args[1]
-    except:
-        await update.message.reply_text("Пример: /add Душ 08:30")
-        return
-
-    user["habits"][name] = {"time": time_str, "days": {}}
-    save_data(data)
-
-    await update.message.reply_text(f"Привычка '{name}' добавлена на {time_str}")
-
-
-async def done_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    data = load_data()
-    user = get_user(data, user_id)
-
-    name = " ".join(context.args)
-    today = get_today()
-
-    if name not in user["habits"]:
-        await update.message.reply_text("Нет такой привычки")
-        return
-
-    user["habits"][name]["days"][today] = True
-    save_data(data)
-
-    await update.message.reply_text(f"✅ Отмечено: {name}")
-
-
-async def list_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    data = load_data()
-    user = get_user(data, user_id)
-
-    text = "Твои привычки:\n"
-    for h, info in user["habits"].items():
-        text += f"{h} — {info['time']}\n"
-
-    await update.message.reply_text(text)
-
-
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_habits:
+        # Создаём словарь привычек для нового пользователя
+        user_habits[user_id] = {
+            "pushups": 0,
+            "new_habit_1": 0,
+            "new_habit_2": 0,
+            # Добавьте свои новые привычки здесь
+        }
     await update.message.reply_text(
-        "Отжимания — просто число.\n"
-        "/add Душ 08:30\n"
-        "/done Душ\n"
-        "/habits"
+        "Привет! Я буду отслеживать твои привычки.\n"
+        "Отправь мне сообщение с названием привычки и количеством, например:\n"
+        "`pushups 20`", parse_mode="Markdown"
     )
 
+# Обработка сообщений с привычками
+async def handle_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_habits:
+        # Если пользователь не запускал /start
+        await update.message.reply_text("Сначала введи /start")
+        return
 
-app = ApplicationBuilder().token(TOKEN).build()
+    try:
+        # Ожидаем формат: habit_name number
+        text = update.message.text.strip().split()
+        habit_name = text[0].lower()
+        count = int(text[1])
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("add", add_habit))
-app.add_handler(CommandHandler("done", done_habit))
-app.add_handler(CommandHandler("habits", list_habits))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_pushups))
+        if habit_name in user_habits[user_id]:
+            user_habits[user_id][habit_name] += count
+            await update.message.reply_text(
+                f"{habit_name} обновлено! Сейчас у тебя: {user_habits[user_id][habit_name]}"
+            )
+        else:
+            await update.message.reply_text(
+                f"Привычка '{habit_name}' не найдена. Используй: {', '.join(user_habits[user_id].keys())}"
+            )
+    except (IndexError, ValueError):
+        await update.message.reply_text(
+            "Неправильный формат. Используй: habit_name число, например:\npushups 20"
+        )
 
-app.run_polling()
+# Команда /status — показать текущие привычки
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_habits:
+        await update.message.reply_text("Сначала введи /start")
+        return
+
+    habits = user_habits[user_id]
+    status_text = "\n".join(f"{k}: {v}" for k, v in habits.items())
+    await update.message.reply_text(f"Твои привычки:\n{status_text}")
+
+# Основная часть бота
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # Регистрируем команды и обработчик сообщений
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_habit))
+
+    # Запуск бота
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
