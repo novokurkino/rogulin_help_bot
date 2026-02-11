@@ -96,7 +96,7 @@ async def handle_pushups(message: types.Message):
         else:
             await message.answer(f"Сделано {user['pushups_done']}, осталось {remaining} отжиманий")
 
-        await message.answer(f"Текущий стрик дней с отжиманиями: {user['pushups_streak']}")
+        await message.answer(f"Выполнял дней подряд: {user['pushups_streak']}")
     else:
         # Если не число — игнорируем
         await message.answer("Введи количество отжиманий цифрой!")
