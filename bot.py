@@ -1,122 +1,152 @@
 import json
-import datetime
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime, timedelta
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-API_TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
+TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+DATA_FILE = "data.json"
 
-DATA_FILE = "users_data.json"
 
-# ================== Загрузка данных ==================
-try:
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        users_data = json.load(f)
-except FileNotFoundError:
-    users_data = {}
+# ---------- Работа с данными ----------
+def load_data():
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
 
-def save_data():
+
+def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(users_data, f, ensure_ascii=False, indent=4)
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-# ================== Клавиатура ==================
-def main_keyboard():
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("Контрастный душ", callback_data="habit_shower"),
-        InlineKeyboardButton("Чтение", callback_data="habit_reading"),
-        InlineKeyboardButton("Витамины", callback_data="habit_vitamins"),
-        InlineKeyboardButton("100 отжиманий", callback_data="habit_pushups")
-    )
-    return keyboard
 
-# ================== /start ==================
-@dp.message(Command("start"))
-async def start_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    if user_id not in users_data:
-        users_data[user_id] = {
-            "habits": {
-                "shower": {"streak": 0, "last_date": None},
-                "reading": {"streak": 0, "last_date": None},
-                "vitamins": {"streak": 0, "last_date": None},
-                "pushups": {"streak": 0, "last_date": None, "done": 0}
-            }
+data = load_data()
+
+
+def today():
+    return datetime.now().date().isoformat()
+
+
+def yesterday():
+    return (datetime.now().date() - timedelta(days=1)).isoformat()
+
+
+# ---------- Клавиатура ----------
+def keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Контрастный душ", callback_data="shower")],
+        [InlineKeyboardButton("Чтение", callback_data="reading")],
+        [InlineKeyboardButton("Витамины", callback_data="vitamins")],
+        [InlineKeyboardButton("100 отжиманий", callback_data="pushups")],
+    ])
+
+
+# ---------- /start ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+
+    if user_id not in data:
+        data[user_id] = {
+            "shower": {"streak": 0, "last": None},
+            "reading": {"streak": 0, "last": None},
+            "vitamins": {"streak": 0, "last": None},
+            "pushups": {"streak": 0, "last": None, "done": 0},
+            "waiting_pushups": False
         }
-        save_data()
-    await message.answer(
-        "Привет! Это твой трекер привычек.\nВыбирай привычку для отметки сегодня:",
-        reply_markup=main_keyboard()
+        save_data(data)
+
+    await update.message.reply_text(
+        "Трекер привычек. Выбери действие:",
+        reply_markup=keyboard()
     )
 
-# ================== Callback для привычек ==================
-@dp.callback_query()
-async def habit_callback(call: types.CallbackQuery):
-    user_id = str(call.from_user.id)
-    today = datetime.date.today().isoformat()
-    await call.answer()
 
-    if user_id not in users_data:
-        await call.message.answer("Сначала напиши /start")
-        return
+# ---------- Обработка привычек ----------
+def update_streak(habit):
+    if habit["last"] == yesterday():
+        habit["streak"] += 1
+    else:
+        habit["streak"] = 1
+    habit["last"] = today()
 
-    habits = users_data[user_id]["habits"]
 
-    # ================== Простые привычки ==================
-    if call.data in ["habit_shower", "habit_reading", "habit_vitamins"]:
-        key_map = {
-            "habit_shower": "shower",
-            "habit_reading": "reading",
-            "habit_vitamins": "vitamins"
-        }
-        key = key_map[call.data]
-        name = key.capitalize()
+async def habit_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-        last_date = habits[key]["last_date"]
-        if last_date == today:
-            await call.message.answer(f"✅ {name} уже отмечена сегодня")
+    user_id = str(query.from_user.id)
+    user = data[user_id]
+
+    habit = query.data
+
+    if habit != "pushups":
+        if user[habit]["last"] == today():
+            await query.message.reply_text("Уже отмечено сегодня.")
             return
 
-        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-        if last_date == yesterday:
-            habits[key]["streak"] += 1
-        else:
-            habits[key]["streak"] = 1
+        update_streak(user[habit])
+        save_data(data)
+        await query.message.reply_text(
+            f"Готово! Дней подряд: {user[habit]['streak']}",
+            reply_markup=keyboard()
+        )
+    else:
+        user["waiting_pushups"] = True
+        user["pushups"]["done"] = 0
+        save_data(data)
+        await query.message.reply_text("Сколько отжиманий сделал?")
 
-        habits[key]["last_date"] = today
-        save_data()
-        await call.message.answer(f"✅ {name} отмечена!\nДней подряд: {habits[key]['streak']}")
 
-    # ================== 100 отжиманий ==================
-    elif call.data == "habit_pushups":
-        last_date = habits["pushups"]["last_date"]
-        if last_date != today:
-            habits["pushups"]["done"] = 0
-        habits["pushups"]["done"] += 100  # Отмечаем полный день
-        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-        if last_date == yesterday:
-            habits["pushups"]["streak"] += 1
-        else:
-            habits["pushups"]["streak"] = 1
-        habits["pushups"]["last_date"] = today
-        save_data()
-        await call.message.answer(
-            f"💪 100 отжиманий отмечены!\nДней подряд: {habits['pushups']['streak']}"
+# ---------- Ввод числа отжиманий ----------
+async def pushups_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user = data[user_id]
+
+    if not user["waiting_pushups"]:
+        return
+
+    try:
+        count = int(update.message.text)
+    except:
+        await update.message.reply_text("Введи число.")
+        return
+
+    user["pushups"]["done"] += count
+    left = 100 - user["pushups"]["done"]
+
+    if left > 0:
+        save_data(data)
+        await update.message.reply_text(f"Осталось {left} отжиманий.")
+    else:
+        user["waiting_pushups"] = False
+        update_streak(user["pushups"])
+        save_data(data)
+        await update.message.reply_text(
+            f"100 выполнены! Дней подряд: {user['pushups']['streak']}",
+            reply_markup=keyboard()
         )
 
-    await call.message.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
 
-# ================== Запуск ==================
-async def main():
-    try:
-        print("Бот запущен...")
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+# ---------- Запуск ----------
+def main():
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(habit_click))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, pushups_input))
+
+    print("BOT STARTED")
+    app.run_polling()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
