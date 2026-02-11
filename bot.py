@@ -28,7 +28,8 @@ def main_keyboard():
         InlineKeyboardButton("Контрастный душ", callback_data="habit_shower"),
         InlineKeyboardButton("Чтение", callback_data="habit_reading"),
         InlineKeyboardButton("Витамины", callback_data="habit_vitamins"),
-        InlineKeyboardButton("100 отжиманий", callback_data="habit_pushups")
+        InlineKeyboardButton("100 отжиманий", callback_data="habit_pushups"),
+        InlineKeyboardButton("Проверить все привычки", callback_data="check_all")
     )
     return keyboard
 
@@ -53,7 +54,6 @@ async def habit_callback(call: types.CallbackQuery):
 
     if str(user_id) not in users_data:
         users_data[str(user_id)] = {}
-
     user = users_data[str(user_id)]
 
     if habit == "pushups":
@@ -61,6 +61,18 @@ async def habit_callback(call: types.CallbackQuery):
         user["await_pushups"] = True
         users_data[str(user_id)] = user
         save_data()
+        await call.answer()
+        return
+
+    if habit == "check_all":
+        if not user:
+            await call.message.answer("Ты ещё не отмечал ни одну привычку.")
+        else:
+            text = "Твои привычки и дни подряд:\n"
+            for h, data in user.items():
+                if h != "await_pushups":
+                    text += f"- {h.replace('_',' ')}: {data.get('streak',0)} дней подряд\n"
+            await call.message.answer(text)
         await call.answer()
         return
 
@@ -85,6 +97,7 @@ async def habit_callback(call: types.CallbackQuery):
 
     await call.answer()
 
+# ================== Отжимания ==================
 @dp.message()
 async def pushups_input(message: types.Message):
     user_id = message.from_user.id
