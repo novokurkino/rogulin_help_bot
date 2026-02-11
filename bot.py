@@ -1,89 +1,108 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, JobQueue
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 import datetime
 import json
 import os
 
 TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
-# Список привычек
-habits = ["Контрастный душ 🚿", "Чтение 📚", "Прием витаминов 💊"]
+GOAL_PUSHUPS = 100  # цель отжиманий
+HABITS = ["Контрастный душ", "Чтение", "Витамины", "Отжимания"]
+DATA_FILE = "data.json"
 
-# Файл для хранения прогресса
-DATA_FILE = "habit_data.json"
+# ----------------- Работа с файлом -----------------
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
-# Загрузка данных или создание пустого словаря
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        habit_data = json.load(f)
-else:
-    habit_data = {}  # {user_id: {habit: count}}
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
 
-# Сохраняем прогресс
-def save_data():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(habit_data, f, ensure_ascii=False, indent=2)
+def get_today():
+    return str(datetime.date.today())
 
-# Команда /start
+# ----------------- Подсчет прогресса -----------------
+def calculate_streak(data, habit):
+    streak = 0
+    today = datetime.date.today()
+
+    for i in range(1, 365):
+        day = str(today - datetime.timedelta(days=i))
+        if day in data and habit in data[day] and data[day][habit]:
+            streak += 1
+        else:
+            break
+    return streak
+
+# ----------------- Обработчик сообщений -----------------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    data = load_data()
+    today = get_today()
+
+    if today not in data:
+        data[today] = {}
+
+    # Если пользователь вводит число → считаем как отжимания
+    if text.isdigit():
+        pushups_done = int(text)
+        data[today]["Отжимания"] = data[today].get("Отжимания", 0) + pushups_done
+        save_data(data)
+        done = data[today]["Отжимания"]
+        left = max(0, GOAL_PUSHUPS - done)
+        if done >= GOAL_PUSHUPS:
+            await update.message.reply_text(f"✅ Дневная цель отжиманий выполнена!\nСделано: {done}")
+        else:
+            await update.message.reply_text(f"Сделано сегодня: {done}\nОсталось до цели: {left}")
+        return
+
+    # Если сообщение совпадает с привычкой
+    if text in HABITS:
+        data[today][text] = True
+        save_data(data)
+        streak = calculate_streak(data, text)
+        await update.message.reply_text(f"✅ Привычка '{text}' отмечена!\nСерий подряд: {streak} дней")
+    else:
+        await update.message.reply_text("Просто отправь название привычки или число отжиманий 🙂")
+
+# ----------------- Команды -----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    habits_text = "\n".join(HABITS)
     await update.message.reply_text(
-        "Привет! Я буду помогать тебе следить за твоими привычками.\n"
-        "Команды:\n"
-        "/habits — показать привычки и отметить выполнение"
+        f"Привет! Я буду помогать отслеживать твои привычки.\n"
+        f"Вот что можно отмечать:\n{habits_text}\n\n"
+        f"Для отжиманий просто пришли число, сколько сделал сегодня."
     )
 
-# Отправка привычек с кнопками
-async def show_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    if user_id not in habit_data:
-        habit_data[user_id] = {h: 0 for h in habits}
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+    today = get_today()
+    message = "Сегодня выполнено:\n"
+    for habit in HABITS:
+        if habit == "Отжимания":
+            done = data.get(today, {}).get(habit, 0)
+            message += f"{habit}: {done}/{GOAL_PUSHUPS}\n"
+        else:
+            done = data.get(today, {}).get(habit, False)
+            message += f"{habit}: {'✅' if done else '❌'}\n"
+    await update.message.reply_text(message)
 
-    keyboard = [
-        [InlineKeyboardButton(f"✔ {h}", callback_data=h)] for h in habits
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Отметьте, что вы сделали сегодня:", reply_markup=reply_markup)
-
-# Обработка нажатий на кнопки
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = str(query.from_user.id)
-    habit = query.data
-
-    # Увеличиваем счетчик на 1
-    if user_id not in habit_data:
-        habit_data[user_id] = {h: 0 for h in habits}
-
-    habit_data[user_id][habit] += 1
-    save_data()
-    await query.edit_message_text(
-        f"Отмечено ✅\n\n{habit} выполнено {habit_data[user_id][habit]} дней"
-    )
-
-# Напоминание
-async def remind(context: ContextTypes.DEFAULT_TYPE):
-    for chat_id in habit_data.keys():
-        keyboard = [
-            [InlineKeyboardButton(f"✔ {h}", callback_data=h)] for h in habits
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        try:
-            await context.bot.send_message(chat_id=int(chat_id), text="Время сделать привычки!", reply_markup=reply_markup)
-        except Exception as e:
-            print(f"Не удалось отправить сообщение {chat_id}: {e}")
-
+# ----------------- Основная функция -----------------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("habits", show_habits))
-    app.add_handler(CallbackQueryHandler(button))
-
-    # Настройка ежедневных напоминаний 9:00 и 20:00
-    job_queue: JobQueue = app.job_queue
-    job_queue.run_daily(remind, time=datetime.time(hour=9, minute=0))
-    job_queue.run_daily(remind, time=datetime.time(hour=20, minute=0))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     print("Бот запущен...")
     app.run_polling()
