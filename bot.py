@@ -143,3 +143,16 @@ if __name__ == "__main__":
     import asyncio
     print("Бот запущен...")
     asyncio.run(dp.start_polling(bot))
+import os
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils import executor
+
+# Получаем токен из переменных окружения
+API_TOKEN = os.getenv("API_TOKEN")
+
+if not API_TOKEN:
+    raise ValueError("API_TOKEN не найден! Добавь его в Variables на Railway.")
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
