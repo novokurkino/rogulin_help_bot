@@ -7,9 +7,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # Берём токен из переменной окружения Railway
-API_TOKEN = os.getenv("API_TOKEN")
-if not API_TOKEN:
-    raise ValueError("API_TOKEN не найден! Добавь его в Variables на Railway.")
+API_TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
