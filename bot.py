@@ -3,7 +3,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 import datetime
 import json
 
-# Вставьте свой токен от BotFather сюда
+# Вставьте сюда ваш токен от BotFather
 TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
 DATA_FILE = "data.json"
@@ -73,4 +73,51 @@ async def done_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     user = get_user(data, user_id)
 
-    name = " ".
+    if not context.args:
+        await update.message.reply_text("Пример: /done Душ")
+        return
+
+    name = " ".join(context.args)
+    today = get_today()
+
+    if name not in user["habits"]:
+        await update.message.reply_text("Нет такой привычки")
+        return
+
+    user["habits"][name]["days"][today] = True
+    save_data(data)
+    await update.message.reply_text(f"✅ Отмечено: {name}")
+
+async def list_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    data = load_data()
+    user = get_user(data, user_id)
+
+    if not user["habits"]:
+        await update.message.reply_text("У тебя нет привычек.")
+        return
+
+    text = "Твои привычки:\n"
+    for h, info in user["habits"].items():
+        text += f"{h} — {info['time']}\n"
+
+    await update.message.reply_text(text)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Отжимания — просто число.\n"
+        "/add Душ 08:30\n"
+        "/done Душ\n"
+        "/habits"
+    )
+
+# Создаем приложение и добавляем обработчики
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("add", add_habit))
+app.add_handler(CommandHandler("done", done_habit))
+app.add_handler(CommandHandler("habits", list_habits))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_pushups))
+
+# Запуск бота
+app.run_polling()
