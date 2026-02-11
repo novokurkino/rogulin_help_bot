@@ -1,16 +1,18 @@
 import json
 import datetime
-import asyncio
 from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+import asyncio
 
-API_TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
-DATA_FILE = "users_data.json"
+API_TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"  # <-- вставьте сюда свой токен
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# ================== Загрузка данных ==================
+DATA_FILE = "users_data.json"
+
+# Загрузка данных
 try:
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         users_data = json.load(f)
@@ -21,140 +23,125 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(users_data, f, ensure_ascii=False, indent=4)
 
-# ================== Кнопки ==================
+# ================== Клавиатура ==================
 def main_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("Контрастный душ", callback_data="habit_shower"),
         InlineKeyboardButton("Чтение", callback_data="habit_reading"),
         InlineKeyboardButton("Витамины", callback_data="habit_vitamins"),
-        InlineKeyboardButton("100 отжиманий", callback_data="habit_pushups"),
-        InlineKeyboardButton("Проверить все привычки", callback_data="check_all")
+        InlineKeyboardButton("100 отжиманий", callback_data="habit_pushups")
     )
     return keyboard
 
-# ================== Старт ==================
-@dp.message()
-async def start(message: types.Message):
-    user_id = message.from_user.id
-    if str(user_id) not in users_data:
-        users_data[str(user_id)] = {}
+# ================== /start ==================
+@dp.message(Command("start"))
+async def start_command(message: types.Message):
+    user_id = str(message.from_user.id)
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "habits": {
+                "shower": {"streak": 0, "last_date": None},
+                "reading": {"streak": 0, "last_date": None},
+                "vitamins": {"streak": 0, "last_date": None},
+                "pushups": {"streak": 0, "last_date": None, "done": 0}
+            }
+        }
         save_data()
+
     await message.answer(
         "Привет! Это твой трекер привычек.\nВыбирай привычку для отметки сегодня:",
         reply_markup=main_keyboard()
     )
 
-# ================== Обработка привычек ==================
+# ================== Callback ==================
 @dp.callback_query()
 async def habit_callback(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    habit = call.data.replace("habit_", "")
+    user_id = str(call.from_user.id)
     today = datetime.date.today().isoformat()
+    await call.answer()  # обязательно
 
-    if str(user_id) not in users_data:
-        users_data[str(user_id)] = {}
-    user = users_data[str(user_id)]
+    if user_id not in users_data:
+        await call.message.answer("Сначала напиши /start")
+        return
 
-    if habit == "pushups":
+    habits = users_data[user_id]["habits"]
+
+    # ---------------- Отжимания ----------------
+    if call.data == "habit_pushups":
         await call.message.answer("Сколько отжиманий ты сделал сегодня?")
-        user["await_pushups"] = True
-        users_data[str(user_id)] = user
-        save_data()
-        await call.answer()
-        return
+        # ждем ввода числа
+        @dp.message()
+        async def pushups_count(msg: types.Message):
+            if msg.from_user.id != call.from_user.id:
+                return  # игнорируем других пользователей
+            try:
+                count = int(msg.text)
+                if count < 0:
+                    raise ValueError
+            except ValueError:
+                await msg.reply("Введи корректное число!")
+                return
 
-    if habit == "check_all":
-        if not user:
-            await call.message.answer("Ты ещё не отмечал ни одну привычку.")
-        else:
-            text = "Твои привычки и дни подряд:\n"
-            for h, data in user.items():
-                if h != "await_pushups":
-                    text += f"- {h.replace('_',' ')}: {data.get('streak',0)} дней подряд\n"
-            await call.message.answer(text)
-        await call.answer()
-        return
+            # Обновляем прогресс
+            if habits["pushups"]["last_date"] != today:
+                habits["pushups"]["done"] = 0
+            habits["pushups"]["done"] += count
 
-    habit_data = user.get(habit, {"last_date": None, "streak": 0})
-    last_date = habit_data["last_date"]
-    streak = habit_data["streak"]
+            remaining = max(0, 100 - habits["pushups"]["done"])
+            if remaining == 0:
+                await msg.answer("🎉 Дневной план по 100 отжиманиям выполнен!")
+                # обновляем streak
+                last_date = habits["pushups"]["last_date"]
+                if last_date == (datetime.date.today() - datetime.timedelta(days=1)).isoformat():
+                    habits["pushups"]["streak"] += 1
+                else:
+                    habits["pushups"]["streak"] = 1
+            else:
+                await msg.answer(f"Осталось сделать {remaining} отжиманий")
 
-    if last_date != today:
-        if last_date is not None:
-            last_date_dt = datetime.date.fromisoformat(last_date)
-            if (datetime.date.today() - last_date_dt).days > 1:
-                streak = 0
-        streak += 1
-        habit_data["streak"] = streak
-        habit_data["last_date"] = today
-        user[habit] = habit_data
-        users_data[str(user_id)] = user
-        save_data()
-        await call.message.answer(f"Привычка '{habit.replace('_',' ')}' засчитана!\nДней подряд: {streak}")
-    else:
-        await call.message.answer(f"Ты уже отмечал эту привычку сегодня!\nДней подряд: {streak}")
+            habits["pushups"]["last_date"] = today
+            save_data()
+            await msg.answer(f"Текущий рекорд дней подряд: {habits['pushups']['streak']}")
+            await msg.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
 
-    await call.answer()
+    # ---------------- Простые привычки ----------------
+    elif call.data == "habit_shower":
+        await mark_habit(call, "shower", "Контрастный душ")
+    elif call.data == "habit_reading":
+        await mark_habit(call, "reading", "Чтение")
+    elif call.data == "habit_vitamins":
+        await mark_habit(call, "vitamins", "Витамины")
 
-# ================== Отжимания ==================
-@dp.message()
-async def pushups_input(message: types.Message):
-    user_id = message.from_user.id
-    user = users_data.get(str(user_id), {})
-
-    if not user.get("await_pushups"):
-        return
-
+# ================== Функция для простых привычек ==================
+async def mark_habit(call, key, name):
+    user_id = str(call.from_user.id)
+    habits = users_data[user_id]["habits"]
     today = datetime.date.today().isoformat()
-    
-    try:
-        count = int(message.text)
-        if count <= 0:
-            await message.answer("Введите положительное число.")
-            return
-    except ValueError:
-        await message.answer("Введите число отжиманий цифрой.")
+
+    last_date = habits[key]["last_date"]
+    if last_date == today:
+        await call.message.answer(f"✅ {name} уже отмечена сегодня")
         return
 
-    habit = "pushups"
-    habit_data = user.get(habit, {"last_date": None, "streak": 0, "done": 0})
-    last_date = habit_data.get("last_date")
-    streak = habit_data.get("streak", 0)
-    done = habit_data.get("done", 0)
-
-    if last_date != today:
-        if last_date is not None:
-            last_date_dt = datetime.date.fromisoformat(last_date)
-            if (datetime.date.today() - last_date_dt).days > 1:
-                streak = 0
-        done = 0
-        streak += 1
-
-    done += count
-    habit_data["done"] = done
-    habit_data["last_date"] = today
-    habit_data["streak"] = streak
-
-    user[habit] = habit_data
-    user.pop("await_pushups", None)
-    users_data[str(user_id)] = user
-    save_data()
-
-    if done >= 100:
-        await message.answer(f"Отлично! Ты сделал 100 отжиманий! Дней подряд: {streak}")
-        habit_data["done"] = 100
-        user[habit] = habit_data
-        users_data[str(user_id)] = user
-        save_data()
+    # проверка на предыдущий день для streak
+    if last_date == (datetime.date.today() - datetime.timedelta(days=1)).isoformat():
+        habits[key]["streak"] += 1
     else:
-        await message.answer(f"Сделано {done} из 100 отжиманий. Осталось {100 - done}.")
+        habits[key]["streak"] = 1
 
-    await message.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
+    habits[key]["last_date"] = today
+    save_data()
+    await call.message.answer(f"✅ {name} отмечена!\nДней подряд: {habits[key]['streak']}")
+    await call.message.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
 
-# ================== Запуск ==================
+# ================== Запуск бота ==================
 async def main():
-    await dp.start_polling(bot)
+    try:
+        print("Бот запущен...")
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
