@@ -1,18 +1,20 @@
 import json
 import datetime
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import asyncio
+from aiogram.fsm.storage.memory import MemoryStorage
 
-API_TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"  # <-- вставьте сюда свой токен
+API_TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
 DATA_FILE = "users_data.json"
 
-# Загрузка данных
 try:
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         users_data = json.load(f)
@@ -23,7 +25,6 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(users_data, f, ensure_ascii=False, indent=4)
 
-# ================== Клавиатура ==================
 def main_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -33,6 +34,10 @@ def main_keyboard():
         InlineKeyboardButton("100 отжиманий", callback_data="habit_pushups")
     )
     return keyboard
+
+# ================== FSM для отжиманий ==================
+class PushupsState(StatesGroup):
+    waiting_for_count = State()
 
 # ================== /start ==================
 @dp.message(Command("start"))
@@ -56,10 +61,10 @@ async def start_command(message: types.Message):
 
 # ================== Callback ==================
 @dp.callback_query()
-async def habit_callback(call: types.CallbackQuery):
+async def habit_callback(call: types.CallbackQuery, state: FSMContext):
     user_id = str(call.from_user.id)
     today = datetime.date.today().isoformat()
-    await call.answer()  # обязательно
+    await call.answer()
 
     if user_id not in users_data:
         await call.message.answer("Сначала напиши /start")
@@ -67,45 +72,9 @@ async def habit_callback(call: types.CallbackQuery):
 
     habits = users_data[user_id]["habits"]
 
-    # ---------------- Отжимания ----------------
     if call.data == "habit_pushups":
         await call.message.answer("Сколько отжиманий ты сделал сегодня?")
-        # ждем ввода числа
-        @dp.message()
-        async def pushups_count(msg: types.Message):
-            if msg.from_user.id != call.from_user.id:
-                return  # игнорируем других пользователей
-            try:
-                count = int(msg.text)
-                if count < 0:
-                    raise ValueError
-            except ValueError:
-                await msg.reply("Введи корректное число!")
-                return
-
-            # Обновляем прогресс
-            if habits["pushups"]["last_date"] != today:
-                habits["pushups"]["done"] = 0
-            habits["pushups"]["done"] += count
-
-            remaining = max(0, 100 - habits["pushups"]["done"])
-            if remaining == 0:
-                await msg.answer("🎉 Дневной план по 100 отжиманиям выполнен!")
-                # обновляем streak
-                last_date = habits["pushups"]["last_date"]
-                if last_date == (datetime.date.today() - datetime.timedelta(days=1)).isoformat():
-                    habits["pushups"]["streak"] += 1
-                else:
-                    habits["pushups"]["streak"] = 1
-            else:
-                await msg.answer(f"Осталось сделать {remaining} отжиманий")
-
-            habits["pushups"]["last_date"] = today
-            save_data()
-            await msg.answer(f"Текущий рекорд дней подряд: {habits['pushups']['streak']}")
-            await msg.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
-
-    # ---------------- Простые привычки ----------------
+        await state.set_state(PushupsState.waiting_for_count)
     elif call.data == "habit_shower":
         await mark_habit(call, "shower", "Контрастный душ")
     elif call.data == "habit_reading":
@@ -113,18 +82,54 @@ async def habit_callback(call: types.CallbackQuery):
     elif call.data == "habit_vitamins":
         await mark_habit(call, "vitamins", "Витамины")
 
-# ================== Функция для простых привычек ==================
+# ================== FSM handler для отжиманий ==================
+@dp.message(PushupsState.waiting_for_count)
+async def pushups_count(msg: types.Message, state: FSMContext):
+    user_id = str(msg.from_user.id)
+    habits = users_data[user_id]["habits"]
+    today = datetime.date.today().isoformat()
+
+    try:
+        count = int(msg.text)
+        if count < 0:
+            raise ValueError
+    except ValueError:
+        await msg.reply("Введи корректное число!")
+        return
+
+    if habits["pushups"]["last_date"] != today:
+        habits["pushups"]["done"] = 0
+
+    habits["pushups"]["done"] += count
+    remaining = max(0, 100 - habits["pushups"]["done"])
+
+    if remaining == 0:
+        await msg.answer("🎉 Дневной план по 100 отжиманиям выполнен!")
+        last_date = habits["pushups"]["last_date"]
+        if last_date == (datetime.date.today() - datetime.timedelta(days=1)).isoformat():
+            habits["pushups"]["streak"] += 1
+        else:
+            habits["pushups"]["streak"] = 1
+    else:
+        await msg.answer(f"Осталось сделать {remaining} отжиманий")
+
+    habits["pushups"]["last_date"] = today
+    save_data()
+    await msg.answer(f"Текущий рекорд дней подряд: {habits['pushups']['streak']}")
+    await msg.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
+    await state.clear()
+
+# ================== Простые привычки ==================
 async def mark_habit(call, key, name):
     user_id = str(call.from_user.id)
     habits = users_data[user_id]["habits"]
     today = datetime.date.today().isoformat()
-
     last_date = habits[key]["last_date"]
+
     if last_date == today:
         await call.message.answer(f"✅ {name} уже отмечена сегодня")
         return
 
-    # проверка на предыдущий день для streak
     if last_date == (datetime.date.today() - datetime.timedelta(days=1)).isoformat():
         habits[key]["streak"] += 1
     else:
@@ -135,7 +140,7 @@ async def mark_habit(call, key, name):
     await call.message.answer(f"✅ {name} отмечена!\nДней подряд: {habits[key]['streak']}")
     await call.message.answer("Выбирай следующую привычку:", reply_markup=main_keyboard())
 
-# ================== Запуск бота ==================
+# ================== Запуск ==================
 async def main():
     try:
         print("Бот запущен...")
