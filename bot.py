@@ -156,3 +156,4 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_pushups))
 
 # Запуск бота
 app.run_polling()
+print("TOKEN:", TOKEN)
