@@ -156,3 +156,11 @@ if not API_TOKEN:
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Загружает .env файл
+
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    raise ValueError("API_TOKEN не найден! Добавь его в Variables на Railway.")
