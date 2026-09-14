@@ -17,7 +17,7 @@ from telegram.ext import (
 # НАСТРОЙКИ
 # ============================================================
 
-TOKEN = os.getenv("8587201858:AAH8D0ORbyVjJ7A_fRNm_9c3LZUXYhQRr5A")
+TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
     raise RuntimeError("Переменная BOT_TOKEN не задана в Railway Variables")
