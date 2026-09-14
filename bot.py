@@ -10,7 +10,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-TOKEN = "8587201858:AAEnYwf8wO7N3DqvxMsmwnLXfD3jp-CjijY"
+TOKEN = "8587201858:AAH8D0ORbyVjJ7A_fRNm_9c3LZUXYhQRr5A"
 
 DATA_FILE = "data.json"
 
